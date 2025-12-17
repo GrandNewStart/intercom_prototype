@@ -1,90 +1,64 @@
 package dev.bluelemonade.relayapp
 
 import android.os.Bundle
-import android.text.method.ScrollingMovementMethod
-import android.view.LayoutInflater
-import android.view.View
-import android.view.ViewGroup
-import android.widget.Button
-import android.widget.TextView
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.appcompat.app.AppCompatActivity
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.recyclerview.widget.LinearLayoutManager
-import androidx.recyclerview.widget.RecyclerView
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
+import androidx.core.view.WindowCompat
 
-class MainActivity : AppCompatActivity() {
-
-    private lateinit var peerList: RecyclerView
-    private lateinit var startStopButton: Button
-    private lateinit var logView: TextView
-    private lateinit var peerListAdapter: PeerListAdapter
+class MainActivity : ComponentActivity() {
 
     private var relayServer: RelayServer? = null
-    private val maxLogLines = 100
-    private val logBuffer = StringBuilder()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        setContentView(R.layout.activity_main)
-        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main)) { v, insets ->
-            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
-            insets
-        }
+        setContent {
+            MaterialTheme {
+                var isServerRunning by remember { mutableStateOf(false) }
+                val logText = remember { mutableStateOf("") }
+                var peers by remember { mutableStateOf<List<String>>(emptyList()) }
 
-        peerList = findViewById(R.id.peer_list)
-        startStopButton = findViewById(R.id.start_stop_button)
-        logView = findViewById(R.id.log_view)
-        logView.movementMethod = ScrollingMovementMethod()
-
-        peerListAdapter = PeerListAdapter()
-        peerList.apply {
-            layoutManager = LinearLayoutManager(this@MainActivity)
-            adapter = peerListAdapter
-        }
-
-        startStopButton.setOnClickListener {
-            if (relayServer == null) {
-                relayServer = RelayServer().apply {
-                    startServer()
-                    onClientsChanged = { runOnUiThread { peerListAdapter.updatePeers(it) } }
-                    onLog = { runOnUiThread { appendLog(it) } }
-                }
-                startStopButton.text = getString(R.string.stop_button_label)
-            } else {
-                relayServer?.stopServer()
-                relayServer = null
-                startStopButton.text = getString(R.string.start_button_label)
-                clearLogs()
+                MainScreen(
+                    isServerRunning = isServerRunning,
+                    logText = logText.value,
+                    peers = peers,
+                    onStartStopClick = {
+                        if (isServerRunning) {
+                            relayServer?.stopServer()
+                            relayServer = null
+                            isServerRunning = false
+                            logText.value = ""
+                            peers = emptyList()
+                        } else {
+                            relayServer = RelayServer().apply {
+                                startServer()
+                                onClientsChanged = { newPeers ->
+                                    runOnUiThread { peers = newPeers }
+                                }
+                                onLog = { logMessage ->
+                                    runOnUiThread { logText.value += "$logMessage\n" }
+                                }
+                            }
+                            isServerRunning = true
+                        }
+                    }
+                )
             }
         }
-    }
-
-    private fun appendLog(message: String) {
-        if (logBuffer.lines().size >= maxLogLines) {
-            val firstNewline = logBuffer.indexOf('\n')
-            if (firstNewline != -1) {
-                logBuffer.delete(0, firstNewline + 1)
-            }
-        }
-        logBuffer.append(message).append("\n")
-        logView.text = logBuffer.toString()
-
-        // Auto-scroll to the bottom
-        val scrollAmount = logView.layout.getLineTop(logView.lineCount) - logView.height
-        if (scrollAmount > 0) {
-            logView.scrollTo(0, scrollAmount)
-        } else {
-            logView.scrollTo(0, 0)
-        }
-    }
-
-    private fun clearLogs() {
-        logBuffer.clear()
-        logView.text = ""
     }
 
     override fun onDestroy() {
@@ -93,32 +67,62 @@ class MainActivity : AppCompatActivity() {
     }
 }
 
-class PeerListAdapter : RecyclerView.Adapter<PeerListAdapter.PeerViewHolder>() {
+@Composable
+fun MainScreen(
+    isServerRunning: Boolean,
+    logText: String,
+    peers: List<String>,
+    onStartStopClick: () -> Unit
+) {
+    val scrollState = rememberScrollState()
 
-    private val peers = mutableListOf<String>()
-
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): PeerViewHolder {
-        val view = LayoutInflater.from(parent.context).inflate(R.layout.list_item_peer, parent, false)
-        return PeerViewHolder(view)
+    LaunchedEffect(logText) {
+        scrollState.animateScrollTo(scrollState.maxValue)
     }
 
-    override fun onBindViewHolder(holder: PeerViewHolder, position: Int) {
-        holder.bind(peers[position])
-    }
-
-    override fun getItemCount(): Int = peers.size
-
-    fun updatePeers(newPeers: List<String>) {
-        peers.clear()
-        peers.addAll(newPeers)
-        notifyDataSetChanged()
-    }
-
-    class PeerViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
-        private val peerName: TextView = itemView.findViewById(R.id.peer_name)
-
-        fun bind(peer: String) {
-            peerName.text = peer
+    Scaffold {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(it)
+                .padding(16.dp)
+        ) {
+            Text(
+                text = logText,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(100.dp)
+                    .verticalScroll(scrollState)
+                    .padding(bottom = 8.dp)
+            )
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+            ) {
+                items(peers) { peer ->
+                    Text(peer, modifier = Modifier.padding(8.dp))
+                }
+            }
+            Button(
+                onClick = onStartStopClick,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(if (isServerRunning) "Stop Server" else "Start Server")
+            }
         }
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+fun MainScreenPreview() {
+    MaterialTheme {
+        MainScreen(
+            isServerRunning = false,
+            logText = "Server logs...\nAnother log...",
+            peers = listOf("192.168.1.1:8888", "192.168.1.2:8888"),
+            onStartStopClick = {}
+        )
     }
 }
